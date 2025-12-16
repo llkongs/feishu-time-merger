@@ -6,7 +6,7 @@ import { calculateMerges } from './utils/mergeLogic';
 import type { MergeProposal } from './utils/mergeLogic';
 import './App.css';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 function App() {
   // Config State
@@ -39,7 +39,7 @@ function App() {
 
   const handlePreview = async () => {
     if (!startFieldId || !endFieldId) {
-      message.error("Please select Start and End time fields");
+      message.error("请先选择 开始时间 和 结束时间 字段");
       return;
     }
     setLoading(true);
@@ -49,8 +49,6 @@ function App() {
       let rawRecordList;
       if (viewId !== 'all') {
         // Try using getRecords with viewId directly if supported, or fall back to view filtering
-        // Official definition: table.getRecords({ viewId }) usually works.
-        // If type check fails (older SDK types), cast to any.
         rawRecordList = await table.getRecords({
           viewId: viewId,
           pageSize: 5000,
@@ -62,7 +60,7 @@ function App() {
       }
 
       if (rawRecordList.records.length === 0) {
-        message.warning("No records found in current view.");
+        message.warning("当前视图下没有找到记录。");
         setLoading(false);
         return;
       }
@@ -99,14 +97,14 @@ function App() {
       setMerges(proposals);
 
       if (proposals.length === 0) {
-        message.info("No continuous records found to merge.");
+        message.info("未发现可合并的连续记录。");
       } else {
         setPreviewOpen(true);
       }
 
     } catch (e) {
       console.error(e);
-      message.error("Failed to fetch records: " + String(e));
+      message.error("获取记录失败: " + String(e));
     } finally {
       setLoading(false);
     }
@@ -127,22 +125,22 @@ function App() {
           await table.deleteRecords(p.recordsToDelete);
         }
       }
-      message.success(`Merged ${merges.length} groups!`);
+      message.success(`成功合并了 ${merges.length} 组记录！`);
       setPreviewOpen(false);
       setMerges([]);
     } catch (e) {
       console.error(e);
-      message.error("Merge error: " + String(e));
+      message.error("合并出错: " + String(e));
     } finally {
       setProcessing(false);
     }
   };
 
   const columns = [
-    { title: 'Count', key: 'cnt', width: 60, render: (_: any, r: MergeProposal) => r.originalRecords.length },
-    { title: 'Group', dataIndex: 'groupKey', key: 'groupKey', ellipsis: true, render: (_: any, r: MergeProposal) => r.originalRecords[0].groupKeys.join(', ') },
+    { title: '碎片数', key: 'cnt', width: 70, render: (_: any, r: MergeProposal) => r.originalRecords.length },
+    { title: '分组', dataIndex: 'groupKey', key: 'groupKey', ellipsis: true, render: (_: any, r: MergeProposal) => r.originalRecords[0].groupKeys.join(', ') },
     {
-      title: 'New Range', key: 'range', render: (_: any, r: MergeProposal) => {
+      title: '合并后时间段', key: 'range', render: (_: any, r: MergeProposal) => {
         return (
           <div style={{ fontSize: 12 }}>
             {new Date(r.newStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -154,15 +152,13 @@ function App() {
       }
     },
     {
-      title: 'Duration Check', key: 'validation', render: (_: any, r: MergeProposal) => {
-        if (!r.validation) return <Tag color="default">N/A</Tag>;
+      title: '时长校验', key: 'validation', render: (_: any, r: MergeProposal) => {
+        if (!r.validation) return <Tag color="default">未启用</Tag>;
         // Assume diff for display
-        // const diff = Math.abs(r.validation.newDuration - r.validation.originalSum);
-
         return (
           <div style={{ fontSize: 12 }}>
-            Sum: {Number(r.validation.originalSum).toFixed(2)} <br />
-            Delta: {(r.validation.newDuration / 3600000).toFixed(2)}h
+            原总和: {Number(r.validation.originalSum).toFixed(2)} <br />
+            新时长: {(r.validation.newDuration / 3600000).toFixed(2)}h
           </div>
         );
       }
@@ -171,15 +167,21 @@ function App() {
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
-      <Title level={3} style={{ textAlign: 'center', marginBottom: 30 }}>Time Record Merger</Title>
+      <Title level={3} style={{ textAlign: 'center', marginBottom: 10 }}>多维表格时间记录自动合并</Title>
 
-      <Card title="Configuration" bordered={false} style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+      <div style={{ textAlign: 'center', marginBottom: 30, color: '#666' }}>
+        <Text>只需一键，自动整理碎片化的连续时间记录。</Text>
+        <br />
+        <Text type="secondary" style={{ fontSize: 12 }}>由 <Text strong>Leon</Text> 与 AI 助手联合开发</Text>
+      </div>
+
+      <Card title="插件配置" bordered={false} style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
         <Form layout="vertical">
           <Row gutter={16}>
             <Col span={24}>
-              <Form.Item label="Source View">
+              <Form.Item label="数据来源视图">
                 <Select value={viewId} onChange={setViewId} style={{ width: '100%' }}>
-                  <Select.Option value="all">All Records</Select.Option>
+                  <Select.Option value="all">所有记录 (All Records)</Select.Option>
                   {views.map(v => <Select.Option key={v.id} value={v.id}>{v.name}</Select.Option>)}
                 </Select>
               </Form.Item>
@@ -188,44 +190,45 @@ function App() {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item label="Start Time" required>
-                <Select options={fields.map(f => ({ label: f.name, value: f.id }))} value={startFieldId} onChange={setStartFieldId} />
+              <Form.Item label="开始时间字段" required>
+                <Select placeholder="请选择" options={fields.map(f => ({ label: f.name, value: f.id }))} value={startFieldId} onChange={setStartFieldId} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="End Time" required>
-                <Select options={fields.map(f => ({ label: f.name, value: f.id }))} value={endFieldId} onChange={setEndFieldId} />
+              <Form.Item label="结束时间字段" required>
+                <Select placeholder="请选择" options={fields.map(f => ({ label: f.name, value: f.id }))} value={endFieldId} onChange={setEndFieldId} />
               </Form.Item>
             </Col>
           </Row>
 
-          <Form.Item label="Grouping Fields">
-            <Select mode="multiple" options={fields.map(f => ({ label: f.name, value: f.id }))} value={groupFieldIds} onChange={setGroupFieldIds} placeholder="Search fields..." showSearch filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())} />
+          <Form.Item label="分组依据字段 (相同分组且时间连续才合并)" tooltip="建议选择任务名称、项目、标签等字段。">
+            <Select mode="multiple" options={fields.map(f => ({ label: f.name, value: f.id }))} value={groupFieldIds} onChange={setGroupFieldIds} placeholder="搜索字段..." showSearch filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())} />
           </Form.Item>
 
           <Divider dashed />
 
-          <Form.Item label="Safety: Validation Field (Duration)" tooltip="Select a number field representing task duration. We will verify that Sum(Original) ≈ New Duration.">
-            <Select allowClear options={fields.map(f => ({ label: f.name, value: f.id }))} value={durationFieldId} onChange={setDurationFieldId} placeholder="Optional validation check" />
+          <Form.Item label="[安全] 时长/工时校验字段" tooltip="这是一个可选的安全功能。如果你选择了工时字段（数字），插件会自动计算「合并前工时总和」与「合并后时间跨度」是否一致，防止数据异常。">
+            <Select allowClear options={fields.map(f => ({ label: f.name, value: f.id }))} value={durationFieldId} onChange={setDurationFieldId} placeholder="可选：用于双重核对数据准确性" />
           </Form.Item>
 
           <Button type="primary" onClick={handlePreview} loading={loading} block size="large" style={{ marginTop: 10 }}>
-            Analyze & Preview
+            开始分析并预览 (Analyze)
           </Button>
         </Form>
       </Card>
 
       <Modal
-        title={`Confirm Merge: ${merges.length} Groups Found`}
+        title={`确认合并：共发现 ${merges.length} 组连续记录`}
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         onOk={executeMerge}
         confirmLoading={processing}
         width={900}
-        okText="Merge All"
+        okText="确认合并并清理旧记录"
+        cancelText="取消"
         okButtonProps={{ danger: true }}
       >
-        <Alert message="Merging will permanently delete the intermediate records shown in the count column." type="warning" showIcon style={{ marginBottom: 16 }} />
+        <Alert message="注意：合并操作将永久删除中间的碎片记录，只保留合并后的一条主记录。请务必确认！" type="warning" showIcon style={{ marginBottom: 16 }} />
         <Table
           dataSource={merges}
           columns={columns}
