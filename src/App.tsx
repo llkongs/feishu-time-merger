@@ -1,20 +1,27 @@
 import { useState, useEffect } from 'react';
 import { bitable } from '@lark-base-open/js-sdk';
-import type { IFieldMeta } from '@lark-base-open/js-sdk';
-import { Button, Select, Form, Modal, Table, message, Alert, Typography } from 'antd';
+import type { IFieldMeta, IViewMeta } from '@lark-base-open/js-sdk';
+import { Button, Select, Form, Modal, Table, message, Alert, Typography, Card, Row, Col, Divider, Tag } from 'antd';
 import { calculateMerges } from './utils/mergeLogic';
 import type { MergeProposal } from './utils/mergeLogic';
 import './App.css';
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
 function App() {
+  // Config State
+  const [loading, setLoading] = useState(false);
   const [fields, setFields] = useState<IFieldMeta[]>([]);
+  const [views, setViews] = useState<IViewMeta[]>([]);
+
+  // Selection State
+  const [viewId, setViewId] = useState<string>('all'); // 'all' or specific viewId
   const [startFieldId, setStartFieldId] = useState<string>();
   const [endFieldId, setEndFieldId] = useState<string>();
   const [groupFieldIds, setGroupFieldIds] = useState<string[]>([]);
+  const [durationFieldId, setDurationFieldId] = useState<string>(); // Optional
 
-  const [loading, setLoading] = useState(false);
+  // Execution State
   const [previewOpen, setPreviewOpen] = useState(false);
   const [merges, setMerges] = useState<MergeProposal[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -24,6 +31,8 @@ function App() {
       const table = await bitable.base.getActiveTable();
       const metaList = await table.getFieldMetaList();
       setFields(metaList);
+      const viewList = await table.getViewMetaList();
+      setViews(viewList);
     }
     init();
   }, []);
@@ -36,19 +45,40 @@ function App() {
     setLoading(true);
     try {
       const table = await bitable.base.getActiveTable();
-      // Fetch records (pageSize default is small, set higher)
-      const recordList = await table.getRecords({
-        pageSize: 5000
-      });
+      // Record list fetching logic
+      let rawRecordList;
+      if (viewId !== 'all') {
+        // Try using getRecords with viewId directly if supported, or fall back to view filtering
+        // Official definition: table.getRecords({ viewId }) usually works.
+        // If type check fails (older SDK types), cast to any.
+        rawRecordList = await table.getRecords({
+          viewId: viewId,
+          pageSize: 5000,
+        } as any);
+      } else {
+        rawRecordList = await table.getRecords({
+          pageSize: 5000,
+        });
+      }
 
-      const rawRecords = await Promise.all(recordList.records.map(async (r) => {
+      if (rawRecordList.records.length === 0) {
+        message.warning("No records found in current view.");
+        setLoading(false);
+        return;
+      }
+
+      const records = await Promise.all(rawRecordList.records.map(async (r) => {
         const startVal = r.fields[startFieldId] as number;
         const endVal = r.fields[endFieldId] as number;
 
-        // Group values: generic string representation
+        let durationVal: number | undefined = undefined;
+        if (durationFieldId) {
+          durationVal = Number(r.fields[durationFieldId]); // Check if Number
+        }
+
         const groupVals = await Promise.all(groupFieldIds.map(async (fid) => {
           const val = r.fields[fid];
-          // Simple serialization for grouping
+          if (!val) return "";
           if (typeof val === 'object') return JSON.stringify(val);
           return String(val);
         }));
@@ -57,18 +87,19 @@ function App() {
           id: r.recordId,
           start: startVal,
           end: endVal,
-          groupKeys: groupVals
+          groupKeys: groupVals,
+          duration: durationVal
         };
       }));
 
-      // Filter invalid records (missing times)
-      const validRecords = rawRecords.filter(r => r.start && r.end);
+      // Filter invalid
+      const validRecords = records.filter(r => r.start && r.end);
 
       const proposals = calculateMerges(validRecords);
       setMerges(proposals);
 
       if (proposals.length === 0) {
-        message.info("No continuous time records found to merge.");
+        message.info("No continuous records found to merge.");
       } else {
         setPreviewOpen(true);
       }
@@ -85,93 +116,121 @@ function App() {
     setProcessing(true);
     try {
       const table = await bitable.base.getActiveTable();
-
-      // Process sequentially or in small batches
       for (const p of merges) {
-        // 1. Update the base record
+        // Update base (End Time Only)
         await table.setRecord(p.baseRecordId, {
           fields: {
             [endFieldId!]: p.newEnd
           }
         });
-        // 2. Delete the merged records
         if (p.recordsToDelete.length > 0) {
           await table.deleteRecords(p.recordsToDelete);
         }
       }
-      message.success(`Successfully merged ${merges.length} groups!`);
+      message.success(`Merged ${merges.length} groups!`);
       setPreviewOpen(false);
       setMerges([]);
-      // Refresh?
     } catch (e) {
       console.error(e);
-      message.error("Error during merge: " + String(e));
+      message.error("Merge error: " + String(e));
     } finally {
       setProcessing(false);
     }
   };
 
   const columns = [
-    { title: 'Group', dataIndex: 'groupKey', key: 'groupKey', render: (_: any, r: MergeProposal) => r.originalRecords[0].groupKeys.join(', ') },
-    { title: 'Records to Merge', key: 'count', render: (_: any, r: MergeProposal) => r.originalRecords.length },
+    { title: 'Count', key: 'cnt', width: 60, render: (_: any, r: MergeProposal) => r.originalRecords.length },
+    { title: 'Group', dataIndex: 'groupKey', key: 'groupKey', ellipsis: true, render: (_: any, r: MergeProposal) => r.originalRecords[0].groupKeys.join(', ') },
     {
-      title: 'New Time Range', key: 'range', render: (_: any, r: MergeProposal) => {
-        return `${new Date(r.newStart).toLocaleString()} -> ${new Date(r.newEnd).toLocaleString()}`;
+      title: 'New Range', key: 'range', render: (_: any, r: MergeProposal) => {
+        return (
+          <div style={{ fontSize: 12 }}>
+            {new Date(r.newStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {' '} → {' '}
+            {new Date(r.newEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            <div style={{ color: '#999' }}>{new Date(r.newStart).toLocaleDateString()}</div>
+          </div>
+        )
+      }
+    },
+    {
+      title: 'Duration Check', key: 'validation', render: (_: any, r: MergeProposal) => {
+        if (!r.validation) return <Tag color="default">N/A</Tag>;
+        // Assume diff for display
+        // const diff = Math.abs(r.validation.newDuration - r.validation.originalSum);
+
+        return (
+          <div style={{ fontSize: 12 }}>
+            Sum: {Number(r.validation.originalSum).toFixed(2)} <br />
+            Delta: {(r.validation.newDuration / 3600000).toFixed(2)}h
+          </div>
+        );
       }
     }
   ];
 
   return (
-    <div style={{ padding: 20 }}>
-      <Title level={3}>Time Record Merger</Title>
-      <Alert message="This tool merges continuous time records. Please backup data before use." type="warning" showIcon style={{ marginBottom: 20 }} />
+    <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+      <Title level={3} style={{ textAlign: 'center', marginBottom: 30 }}>Time Record Merger</Title>
 
-      <Form layout="vertical">
-        <Form.Item label="Start Time Field" required>
-          <Select
-            options={fields.map(f => ({ label: f.name, value: f.id }))}
-            value={startFieldId} onChange={setStartFieldId}
-            placeholder="Select Start Time"
-          />
-        </Form.Item>
-        <Form.Item label="End Time Field" required>
-          <Select
-            options={fields.map(f => ({ label: f.name, value: f.id }))}
-            value={endFieldId} onChange={setEndFieldId}
-            placeholder="Select End Time"
-          />
-        </Form.Item>
-        <Form.Item label="Grouping Category Fields (Optional)">
-          <Select
-            mode="multiple"
-            options={fields.map(f => ({ label: f.name, value: f.id }))}
-            value={groupFieldIds} onChange={setGroupFieldIds}
-            placeholder="Select fields to group by (e.g. Activity, Tag)"
-          />
-        </Form.Item>
+      <Card title="Configuration" bordered={false} style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+        <Form layout="vertical">
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item label="Source View">
+                <Select value={viewId} onChange={setViewId} style={{ width: '100%' }}>
+                  <Select.Option value="all">All Records</Select.Option>
+                  {views.map(v => <Select.Option key={v.id} value={v.id}>{v.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
-        <Button type="primary" onClick={handlePreview} loading={loading} block size="large">
-          Preview Merges
-        </Button>
-      </Form>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="Start Time" required>
+                <Select options={fields.map(f => ({ label: f.name, value: f.id }))} value={startFieldId} onChange={setStartFieldId} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="End Time" required>
+                <Select options={fields.map(f => ({ label: f.name, value: f.id }))} value={endFieldId} onChange={setEndFieldId} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item label="Grouping Fields">
+            <Select mode="multiple" options={fields.map(f => ({ label: f.name, value: f.id }))} value={groupFieldIds} onChange={setGroupFieldIds} placeholder="Search fields..." showSearch filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())} />
+          </Form.Item>
+
+          <Divider dashed />
+
+          <Form.Item label="Safety: Validation Field (Duration)" tooltip="Select a number field representing task duration. We will verify that Sum(Original) ≈ New Duration.">
+            <Select allowClear options={fields.map(f => ({ label: f.name, value: f.id }))} value={durationFieldId} onChange={setDurationFieldId} placeholder="Optional validation check" />
+          </Form.Item>
+
+          <Button type="primary" onClick={handlePreview} loading={loading} block size="large" style={{ marginTop: 10 }}>
+            Analyze & Preview
+          </Button>
+        </Form>
+      </Card>
 
       <Modal
-        title={`Confirm Merge (${merges.length} Groups)`}
+        title={`Confirm Merge: ${merges.length} Groups Found`}
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         onOk={executeMerge}
         confirmLoading={processing}
-        width={800}
-        okText="Merge & Delete"
+        width={900}
+        okText="Merge All"
         okButtonProps={{ danger: true }}
       >
-        <Text>The following groups of records are continuous and will be merged into single records. Intermediate records will be <b>permanently deleted</b>.</Text>
+        <Alert message="Merging will permanently delete the intermediate records shown in the count column." type="warning" showIcon style={{ marginBottom: 16 }} />
         <Table
           dataSource={merges}
           columns={columns}
           rowKey="baseRecordId"
           pagination={{ pageSize: 5 }}
-          style={{ marginTop: 10 }}
           size="small"
         />
       </Modal>

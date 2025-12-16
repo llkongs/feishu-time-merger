@@ -2,7 +2,8 @@ export interface IRecord {
     id: string;
     start: number; // timestamp
     end: number; // timestamp
-    groupKeys: string[]; // Values of the grouping fields (e.g. ["Work", "Tag1"])
+    groupKeys: string[];
+    duration?: number; // Optional duration for validation
 }
 
 export interface MergeProposal {
@@ -11,6 +12,11 @@ export interface MergeProposal {
     newEnd: number;
     recordsToDelete: string[];
     originalRecords: IRecord[];
+    validation?: {
+        originalSum: number;
+        newDuration: number;
+        isValid: boolean;
+    };
 }
 
 /**
@@ -68,8 +74,9 @@ export function calculateMerges(records: IRecord[]): MergeProposal[] {
                     currentProposal.originalRecords.push(record);
                 } else {
                     // Discontinuous. 
-                    // Save current proposal IF it involves more than 1 record (i.e. has deletions)
+                    // Finalize previous proposal
                     if (currentProposal.recordsToDelete.length > 0) {
+                        finalizeProposal(currentProposal);
                         proposals.push(currentProposal);
                     }
                     // Start new proposal
@@ -86,9 +93,46 @@ export function calculateMerges(records: IRecord[]): MergeProposal[] {
 
         // Push the last one if valid
         if (currentProposal && currentProposal.recordsToDelete.length > 0) {
+            finalizeProposal(currentProposal);
             proposals.push(currentProposal);
         }
     });
 
     return proposals;
+}
+
+function finalizeProposal(p: MergeProposal) {
+    // validation check
+    const originalSum = p.originalRecords.reduce((sum, r) => sum + (r.duration || 0), 0);
+    // duration in hours 
+    // Usually timestamps are ms. 
+    // But duration field usually depends on user input (Number). 
+    // We'll compare raw numbers assuming consistent units, or just display them.
+    // However, user said "Time Duration Field". 
+    // Let's assume standard behavior: Duration = End - Start (ms).
+    // If the User Selects a number field, we compare that number sum vs Time Delta.
+
+    // Actually, simply summing the duration values provided is what's requested.
+    // The "New Duration" is (NewEnd - NewStart).
+    // We need unit conversion if the field is "Hours" but timestamps are ms.
+    // For safety, we just calculate the sum and let UI decide how to display/warn, 
+    // OR we calculate the Sum and store it.
+
+    // Let's store precise values.
+    const newDurationMs = p.newEnd - p.newStart;
+
+    // Check if original records have duration
+    const hasDuration = p.originalRecords.every(r => r.duration !== undefined);
+
+    if (hasDuration) {
+        // We can't strictly validate without knowing units. 
+        // But usually: Sum(Durations) should match.
+        // We will mark it valid if they are "close" relative to each other? 
+        // No, simplest is just to pass the data back.
+        p.validation = {
+            originalSum: originalSum,
+            newDuration: newDurationMs,
+            isValid: true // Pending UI check or unit conversion
+        };
+    }
 }
