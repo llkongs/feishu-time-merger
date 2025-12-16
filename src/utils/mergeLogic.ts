@@ -56,7 +56,12 @@ export function calculateMerges(records: IRecord[]): MergeProposal[] {
                 // Let's assume strict match or very small epsilon if needed.
                 // User example: 10:00 -> 10:00.
 
-                if (Math.abs(record.start - currentProposal.newEnd) < 1000) { // < 1 second diff 
+                const isSequential = Math.abs(record.start - currentProposal.newEnd) < 1000;
+                // Check if the new record is on the same day as the current block's start
+                // Using locale string or UTC date components to check day equality
+                const isSameDay = new Date(currentProposal.newStart).toDateString() === new Date(record.start).toDateString();
+
+                if (isSequential && isSameDay) { // < 1 second diff AND same day 
                     // Merge!
                     currentProposal.newEnd = Math.max(currentProposal.newEnd, record.end);
                     currentProposal.recordsToDelete.push(record.id);
