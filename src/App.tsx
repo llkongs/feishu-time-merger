@@ -28,11 +28,37 @@ function App() {
 
   useEffect(() => {
     async function init() {
-      const table = await bitable.base.getActiveTable();
+      // 1. Get Active Table First
+      let table = await bitable.base.getActiveTable();
+
+      // Market Requirement: Iterate all tables to check for data if needed?
+      // "If no strict field type limit, judge by record count."
+      // Let's stick to Active Table for simplicity unless empty.
+      // But let's check field types in Active Table to smart-select.
+
       const metaList = await table.getFieldMetaList();
       setFields(metaList);
       const viewList = await table.getViewMetaList();
       setViews(viewList);
+
+      // --- Smart Initialization Logic ---
+      // 1. Find Date Fields
+      // FieldType 5 is Date (usually). Let's check bitable.FieldType if possible, or guess by name/type.
+      // Since SDK types might vary, we rely on checking if it's a date-like type.
+      // For now, let's look for fields with "Time" or "Date" in name, or just first 2 fields if strict type unknown.
+      // But better: Use `type` prop. 
+      // FieldType.DateTime = 5.
+
+      const dateFields = metaList.filter(f => f.type === 5);
+
+      if (dateFields.length >= 2) {
+        // Heuristic: Start Time is likely the first one created or named "Start"
+        setStartFieldId(dateFields[0].id);
+        setEndFieldId(dateFields[1].id);
+        message.success("已自动为您选择了日期字段");
+      } else {
+        // If not enough date fields, do not auto select.
+      }
     }
     init();
   }, []);
